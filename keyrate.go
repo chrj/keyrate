@@ -17,9 +17,9 @@ type entry[K comparable] struct {
 	lruElem  *list.Element // value = K; nil when LRU is disabled
 }
 
-// Map holds an independent [rate.Limiter] for each distinct key.
+// Limiters holds an independent [rate.Limiter] for each distinct key.
 // The zero value is not usable; create one with [New].
-type Map[K comparable] struct {
+type Limiters[K comparable] struct {
 	mu      sync.Mutex
 	entries map[K]*entry[K]
 	limit   rate.Limit
@@ -42,7 +42,7 @@ type evictConfig struct {
 }
 
 // WithTTL evicts keys that have not been accessed for at least d.
-// A background goroutine sweeps every d/2; call [Map.Stop] when done.
+// A background goroutine sweeps every d/2; call [Limiters.Stop] when done.
 func WithTTL(d time.Duration) Option {
 	return func(c *evictConfig) { c.ttl = d }
 }
@@ -56,15 +56,15 @@ func WithMaxSize(n int) Option {
 // WithAutoEvict derives the TTL from the rate parameters: once a bucket has
 // been idle long enough to fully refill (burst÷r seconds), the limiter is
 // indistinguishable from a fresh one, so eviction is semantically free.
-// A background goroutine is started; call [Map.Stop] when done.
+// A background goroutine is started; call [Limiters.Stop] when done.
 // WithAutoEvict is a no-op when r is [rate.Inf] or burst is 0.
 func WithAutoEvict() Option {
 	return func(c *evictConfig) { c.auto = true }
 }
 
-// New returns a Map whose per-key limiters allow up to burst events
+// New returns a Limiters whose per-key limiters allow up to burst events
 // instantaneously, then refill at r events per second.
-func New[K comparable](r rate.Limit, burst int, opts ...Option) *Map[K] {
+func New[K comparable](r rate.Limit, burst int, opts ...Option) *Limiters[K] {
 	cfg := &evictConfig{}
 	for _, o := range opts {
 		o(cfg)
@@ -73,7 +73,7 @@ func New[K comparable](r rate.Limit, burst int, opts ...Option) *Map[K] {
 		cfg.ttl = time.Duration(float64(burst) / float64(r) * float64(time.Second))
 	}
 
-	m := &Map[K]{
+	m := &Limiters[K]{
 		entries: make(map[K]*entry[K]),
 		limit:   r,
 		burst:   burst,
@@ -93,20 +93,20 @@ func New[K comparable](r rate.Limit, burst int, opts ...Option) *Map[K] {
 // Stop halts the background eviction goroutine started by [WithTTL] or
 // [WithAutoEvict]. It is safe to call multiple times and is a no-op when
 // neither option was used.
-func (m *Map[K]) Stop() {
+func (m *Limiters[K]) Stop() {
 	m.once.Do(func() { close(m.done) })
 }
 
 // remove deletes key k and removes it from the LRU list if applicable.
 // Must be called with m.mu held.
-func (m *Map[K]) remove(k K, e *entry[K]) {
+func (m *Limiters[K]) remove(k K, e *entry[K]) {
 	if e.lruElem != nil {
 		m.lru.Remove(e.lruElem)
 	}
 	delete(m.entries, k)
 }
 
-func (m *Map[K]) sweepLoop() {
+func (m *Limiters[K]) sweepLoop() {
 	interval := max(m.ttl/2, time.Millisecond)
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
@@ -129,7 +129,7 @@ func (m *Map[K]) sweepLoop() {
 
 // Limiter returns the [rate.Limiter] for key, creating one on first use.
 // The returned limiter can be used directly for Reserve/Wait calls.
-func (m *Map[K]) Limiter(key K) *rate.Limiter {
+func (m *Limiters[K]) Limiter(key K) *rate.Limiter {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -161,12 +161,12 @@ func (m *Map[K]) Limiter(key K) *rate.Limiter {
 
 // Allow reports whether key's limiter permits one event right now.
 // It is shorthand for m.Limiter(key).Allow().
-func (m *Map[K]) Allow(key K) bool {
+func (m *Limiters[K]) Allow(key K) bool {
 	return m.Limiter(key).Allow()
 }
 
 // Has reports whether key has an active limiter without creating one.
-func (m *Map[K]) Has(key K) bool {
+func (m *Limiters[K]) Has(key K) bool {
 	m.mu.Lock()
 	_, ok := m.entries[key]
 	m.mu.Unlock()
@@ -175,7 +175,7 @@ func (m *Map[K]) Has(key K) bool {
 
 // Delete removes the limiter for key. The next call for that key starts
 // fresh with a full burst. A no-op if key is not present.
-func (m *Map[K]) Delete(key K) {
+func (m *Limiters[K]) Delete(key K) {
 	m.mu.Lock()
 	if e, ok := m.entries[key]; ok {
 		m.remove(key, e)
@@ -184,7 +184,7 @@ func (m *Map[K]) Delete(key K) {
 }
 
 // Len returns the number of keys currently tracked.
-func (m *Map[K]) Len() int {
+func (m *Limiters[K]) Len() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.entries)

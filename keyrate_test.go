@@ -12,8 +12,8 @@ import (
 	"github.com/razor/keyrate"
 )
 
-// newMap returns a plain map with no eviction (1 req/s, burst 2).
-func newMap() *keyrate.Map[string] {
+// newMap returns a plain Limiters with no eviction (1 req/s, burst 2).
+func newMap() *keyrate.Limiters[string] {
 	return keyrate.New[string](rate.Every(time.Second), 2)
 }
 
