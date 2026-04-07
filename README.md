@@ -47,6 +47,9 @@ func New[K comparable](r rate.Limit, burst int, opts ...Option) *Limiters[K]
 // Shorthand for Get(key).Allow().
 func (m *Limiters[K]) Allow(key K) bool
 
+// AllowN reports whether the key's limiter permits n events at time t.
+func (m *Limiters[K]) AllowN(key K, t time.Time, n int) bool
+
 // Get returns the *rate.Limiter for key, creating one on first use.
 // Use this when you need Reserve or Wait instead of Allow.
 func (m *Limiters[K]) Get(key K) *rate.Limiter
@@ -67,11 +70,53 @@ func (m *Limiters[K]) Len() int
 func (m *Limiters[K]) Stop()
 ```
 
+### Forwarded methods
+
+These methods delegate directly to the underlying `*rate.Limiter` for each key, creating the limiter on first use. See the [`rate.Limiter` documentation](https://pkg.go.dev/golang.org/x/time/rate#Limiter) for full details.
+
+```go
+// Burst returns the burst size of key's limiter.
+func (m *Limiters[K]) Burst(key K) int
+
+// Limit returns the rate limit of key's limiter.
+func (m *Limiters[K]) Limit(key K) rate.Limit
+
+// Tokens returns the number of tokens available in key's limiter right now.
+func (m *Limiters[K]) Tokens(key K) float64
+
+// TokensAt returns the number of tokens available in key's limiter at time t.
+func (m *Limiters[K]) TokensAt(key K, t time.Time) float64
+
+// SetBurst updates the burst size of key's limiter.
+func (m *Limiters[K]) SetBurst(key K, newBurst int)
+
+// SetBurstAt updates the burst size of key's limiter as of time t.
+func (m *Limiters[K]) SetBurstAt(key K, t time.Time, newBurst int)
+
+// SetLimit updates the rate limit of key's limiter.
+func (m *Limiters[K]) SetLimit(key K, newLimit rate.Limit)
+
+// SetLimitAt updates the rate limit of key's limiter as of time t.
+func (m *Limiters[K]) SetLimitAt(key K, t time.Time, newLimit rate.Limit)
+
+// Reserve returns a *rate.Reservation for one event from key's limiter.
+func (m *Limiters[K]) Reserve(key K) *rate.Reservation
+
+// ReserveN returns a *rate.Reservation for n events at time t from key's limiter.
+func (m *Limiters[K]) ReserveN(key K, t time.Time, n int) *rate.Reservation
+
+// Wait blocks until key's limiter permits one event, or ctx is done.
+func (m *Limiters[K]) Wait(ctx context.Context, key K) error
+
+// WaitN blocks until key's limiter permits n events, or ctx is done.
+func (m *Limiters[K]) WaitN(ctx context.Context, key K, n int) error
+```
+
 ## Eviction
 
 Without eviction the map grows unboundedly — one entry per distinct key seen. The three eviction options can be combined freely.
 
-### `WithMaxSize(n int)` — LRU cap
+### WithMaxSize(n int) — LRU cap
 
 Keeps at most `n` keys. When a new key would exceed the cap, the least-recently-used key is dropped. Eviction is synchronous on insert; no background goroutine is started.
 
@@ -82,9 +127,9 @@ limiters := keyrate.New[netip.Addr](rate.Every(time.Second), 10,
 )
 ```
 
-### `WithTTL(d time.Duration)` — idle TTL
+### WithTTL(d time.Duration) — idle TTL
 
-Evicts keys that have not been accessed for at least `d`. A background goroutine sweeps every `d/2`. Call `Stop()` when the `Limiters` is no longer needed.
+Evicts keys that have not been accessed for at least `d`. A background goroutine sweeps every `d/2`. Call `Stop()` when the Limiters is no longer needed.
 
 ```go
 limiters := keyrate.New[string](rate.Every(time.Second), 5,
@@ -95,9 +140,9 @@ defer limiters.Stop()
 
 Accessing a key resets its idle timer, so active keys are never evicted.
 
-### `WithAutoEvict()` — semantic TTL
+### WithAutoEvict() — semantic TTL
 
-Derives the TTL automatically as `burst ÷ r` — the time needed to fully refill an empty bucket. Once a bucket is full it is indistinguishable from a freshly created one, so eviction is semantically free: no observable difference to callers. This is a no-op when `r` is `rate.Inf` or `burst` is 0.
+Derives the TTL automatically as `burst ÷ r` — the time needed to fully refill an empty bucket. Once a bucket is full it is indistinguishable from a freshly created one, so eviction is semantically free: no observable difference to callers. This is a no-op when `r` is `rate.Inf` or `burst` is `0`.
 
 ```go
 // rate=1/s, burst=60 → auto TTL = 60s
@@ -120,9 +165,9 @@ defer limiters.Stop()
 
 LRU and TTL work independently: LRU evicts synchronously on insert when the cap is reached; TTL evicts asynchronously in the background.
 
-## Using the underlying `rate.Limiter`
+## Using the underlying rate.Limiter
 
-`Allow` handles the common case. The full [`rate.Limiter`](https://pkg.go.dev/golang.org/x/time/rate#Limiter) API is exposed directly on `Limiters`, with the key as the first argument (or second for methods that take a `context.Context`):
+`Allow` and `AllowN` handle the common case. The full `rate.Limiter` API is exposed directly on `Limiters`, with the key as the first argument (or second for methods that take a `context.Context`):
 
 ```go
 // Block until the event is permitted, or the context is cancelled.
@@ -146,14 +191,13 @@ fmt.Println(limiters.Tokens(userID))
 
 `Get(key)` is also available when you need to pass a `*rate.Limiter` directly to another function.
 
-### Reservations and eviction
+## Reservations and eviction
 
-`Reserve`, `ReserveN`, `Wait`, and `WaitN` all operate on the limiter that exists **at the moment of the call**. If the key is evicted — by `WithTTL`, `WithAutoEvict`, `WithMaxSize`, or `Delete` — while a reservation is outstanding or a `Wait` is blocking, the following happens:
+`Reserve`, `ReserveN`, `Wait`, and `WaitN` all operate on the limiter that exists at the moment of the call. If the key is evicted — by `WithTTL`, `WithAutoEvict`, `WithMaxSize`, or `Delete` — while a reservation is outstanding or a `Wait` is blocking, the following happens:
 
-- The call completes against the now-detached limiter: the caller proceeds normally.
-- The next access to the same key creates a **fresh limiter** with a full burst, unaware of the in-flight reservation or wait.
-- Both the original caller and new callers may proceed concurrently, causing **one-time over-admission** for that key.
-- Calling `Cancel()` on a stale reservation refunds tokens to the detached limiter, not to the replacement — the refund has no effect on live rate limiting.
+The call completes against the now-detached limiter: the caller proceeds normally. The next access to the same key creates a fresh limiter with a full burst, unaware of the in-flight reservation or wait. Both the original caller and new callers may proceed concurrently, causing one-time over-admission for that key.
+
+Calling `Cancel()` on a stale reservation refunds tokens to the detached limiter, not to the replacement — the refund has no effect on live rate limiting.
 
 `Allow` and `AllowN` are not affected: the token is consumed atomically before any eviction can occur.
 
