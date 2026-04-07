@@ -122,19 +122,39 @@ LRU and TTL work independently: LRU evicts synchronously on insert when the cap 
 
 ## Using the underlying `rate.Limiter`
 
-`Allow` handles the common case, but the full `rate.Limiter` API is available via `Get(key)`:
+`Allow` handles the common case. The full [`rate.Limiter`](https://pkg.go.dev/golang.org/x/time/rate#Limiter) API is exposed directly on `Limiters`, with the key as the first argument (or second for methods that take a `context.Context`):
 
 ```go
-// Wait until the limiter allows the event (respects context cancellation).
-if err := limiters.Get(userID).Wait(r.Context()); err != nil {
+// Block until the event is permitted, or the context is cancelled.
+if err := limiters.Wait(r.Context(), userID); err != nil {
     http.Error(w, "cancelled", http.StatusRequestTimeout)
     return
 }
 
-// Reserve n tokens at once.
-r := limiters.Get(userID).ReserveN(time.Now(), n)
-if !r.OK() {
-    // n exceeds burst; will never be satisfiable.
+// Consume n tokens, returning how long to wait before proceeding.
+res := limiters.ReserveN(userID, time.Now(), n)
+if !res.OK() {
+    // n exceeds the burst; this reservation can never be satisfied.
 }
-time.Sleep(r.Delay())
+time.Sleep(res.Delay())
+
+// Inspect or adjust a key's limiter at runtime.
+limiters.SetLimit(userID, newRate)
+limiters.SetBurst(userID, newBurst)
+fmt.Println(limiters.Tokens(userID))
 ```
+
+`Get(key)` is also available when you need to pass a `*rate.Limiter` directly to another function.
+
+### Reservations and eviction
+
+`Reserve`, `ReserveN`, `Wait`, and `WaitN` all operate on the limiter that exists **at the moment of the call**. If the key is evicted — by `WithTTL`, `WithAutoEvict`, `WithMaxSize`, or `Delete` — while a reservation is outstanding or a `Wait` is blocking, the following happens:
+
+- The call completes against the now-detached limiter: the caller proceeds normally.
+- The next access to the same key creates a **fresh limiter** with a full burst, unaware of the in-flight reservation or wait.
+- Both the original caller and new callers may proceed concurrently, causing **one-time over-admission** for that key.
+- Calling `Cancel()` on a stale reservation refunds tokens to the detached limiter, not to the replacement — the refund has no effect on live rate limiting.
+
+`Allow` and `AllowN` are not affected: the token is consumed atomically before any eviction can occur.
+
+**Recommendation:** prefer `Allow`/`AllowN` when eviction is active. Use `Reserve`/`Wait` only when you can accept the over-admission edge case or when eviction is infrequent relative to reservation lifetimes.
