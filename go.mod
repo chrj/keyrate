@@ -1,4 +1,4 @@
-module github.com/razor/keyrate
+module github.com/chrj/keyrate
 
 go 1.26.1
 

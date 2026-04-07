@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/razor/keyrate"
+	"github.com/chrj/keyrate"
 )
 
 // newMap returns a plain Limiters with no eviction (1 req/s, burst 2).

@@ -7,7 +7,7 @@ Attach an independent token-bucket limiter to any comparable key — IP address,
 ## Installation
 
 ```
-go get github.com/razor/keyrate
+go get github.com/chrj/keyrate
 ```
 
 ## Usage
