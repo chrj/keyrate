@@ -44,15 +44,15 @@ func New[K comparable](r rate.Limit, burst int, opts ...Option) *Limiters[K]
 
 ```go
 // Allow reports whether the key's limiter permits one event right now.
-// Shorthand for Limiter(key).Allow().
+// Shorthand for Get(key).Allow().
 func (m *Limiters[K]) Allow(key K) bool
 
-// Limiter returns the *rate.Limiter for key, creating one on first use.
+// Get returns the *rate.Limiter for key, creating one on first use.
 // Use this when you need Reserve or Wait instead of Allow.
-func (m *Limiters[K]) Limiter(key K) *rate.Limiter
+func (m *Limiters[K]) Get(key K) *rate.Limiter
 
 // Has reports whether key currently has an active limiter.
-// Unlike Limiter, it does not create one if absent.
+// Unlike Get, it does not create one if absent.
 func (m *Limiters[K]) Has(key K) bool
 
 // Delete removes the limiter for key. The next access starts fresh
@@ -122,17 +122,17 @@ LRU and TTL work independently: LRU evicts synchronously on insert when the cap 
 
 ## Using the underlying `rate.Limiter`
 
-`Allow` handles the common case, but the full `rate.Limiter` API is available via `Limiter(key)`:
+`Allow` handles the common case, but the full `rate.Limiter` API is available via `Get(key)`:
 
 ```go
 // Wait until the limiter allows the event (respects context cancellation).
-if err := limiters.Limiter(userID).Wait(r.Context()); err != nil {
+if err := limiters.Get(userID).Wait(r.Context()); err != nil {
     http.Error(w, "cancelled", http.StatusRequestTimeout)
     return
 }
 
 // Reserve n tokens at once.
-r := limiters.Limiter(userID).ReserveN(time.Now(), n)
+r := limiters.Get(userID).ReserveN(time.Now(), n)
 if !r.OK() {
     // n exceeds burst; will never be satisfiable.
 }

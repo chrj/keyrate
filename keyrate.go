@@ -127,9 +127,9 @@ func (m *Limiters[K]) sweepLoop() {
 	}
 }
 
-// Limiter returns the [rate.Limiter] for key, creating one on first use.
+// Get returns the [rate.Limiter] for key, creating one on first use.
 // The returned limiter can be used directly for Reserve/Wait calls.
-func (m *Limiters[K]) Limiter(key K) *rate.Limiter {
+func (m *Limiters[K]) Get(key K) *rate.Limiter {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -160,9 +160,9 @@ func (m *Limiters[K]) Limiter(key K) *rate.Limiter {
 }
 
 // Allow reports whether key's limiter permits one event right now.
-// It is shorthand for m.Limiter(key).Allow().
+// It is shorthand for m.Get(key).Allow().
 func (m *Limiters[K]) Allow(key K) bool {
-	return m.Limiter(key).Allow()
+	return m.Get(key).Allow()
 }
 
 // Has reports whether key has an active limiter without creating one.

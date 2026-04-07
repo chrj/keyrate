@@ -91,8 +91,8 @@ func TestDeleteResetsLimiter(t *testing.T) {
 
 func TestLimiterReturnedIsSame(t *testing.T) {
 	m := newMap()
-	l1 := m.Limiter("k")
-	l2 := m.Limiter("k")
+	l1 := m.Get("k")
+	l2 := m.Get("k")
 	if l1 != l2 {
 		t.Fatal("expected the same *rate.Limiter for the same key")
 	}
@@ -147,7 +147,7 @@ func TestConcurrentAccess(t *testing.T) {
 		wg.Go(func() {
 			for range 100 {
 				m.Allow(g % 20)
-				m.Limiter(g % 20)
+				m.Get(g % 20)
 				if g%50 == 0 {
 					m.Delete(g % 20)
 				}
