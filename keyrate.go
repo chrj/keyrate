@@ -182,11 +182,23 @@ func (m *Limiters[K]) Limit(key K) rate.Limit {
 }
 
 // Reserve returns a [rate.Reservation] for one event from key's limiter.
+//
+// Eviction caveat: the reservation is bound to the limiter that exists at the
+// moment of this call. If the key is evicted (by [WithTTL], [WithAutoEvict],
+// [WithMaxSize], or [Delete]) before the reservation is acted upon, the next
+// access to the same key creates a fresh limiter that is unaware of the
+// outstanding reservation. Both the reservation holder and new callers may
+// proceed concurrently, causing a one-time over-admission for that key.
+// Calling [rate.Reservation.Cancel] on a stale reservation refunds tokens to
+// the detached limiter, not to the replacement — the refund has no effect on
+// live rate limiting. Prefer [Allow] or [Wait] when eviction is active.
 func (m *Limiters[K]) Reserve(key K) *rate.Reservation {
 	return m.Get(key).Reserve()
 }
 
 // ReserveN returns a [rate.Reservation] for n events at time t from key's limiter.
+//
+// See [Limiters.Reserve] for the eviction caveat that applies to all reservation-based methods.
 func (m *Limiters[K]) ReserveN(key K, t time.Time, n int) *rate.Reservation {
 	return m.Get(key).ReserveN(t, n)
 }
@@ -222,11 +234,17 @@ func (m *Limiters[K]) TokensAt(key K, t time.Time) float64 {
 }
 
 // Wait blocks until key's limiter permits one event, or ctx is done.
+//
+// See [Limiters.Reserve] for the eviction caveat: if the key is evicted while
+// Wait is blocking, the call completes against the detached limiter and a
+// concurrent new caller receives a fresh limiter unaware of this in-flight wait.
 func (m *Limiters[K]) Wait(ctx context.Context, key K) error {
 	return m.Get(key).Wait(ctx)
 }
 
 // WaitN blocks until key's limiter permits n events, or ctx is done.
+//
+// See [Limiters.Reserve] for the eviction caveat that applies to all reservation-based methods.
 func (m *Limiters[K]) WaitN(ctx context.Context, key K, n int) error {
 	return m.Get(key).WaitN(ctx, n)
 }
