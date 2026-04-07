@@ -4,6 +4,7 @@ package keyrate
 
 import (
 	"container/list"
+	"context"
 	"sync"
 	"time"
 
@@ -163,6 +164,71 @@ func (m *Limiters[K]) Get(key K) *rate.Limiter {
 // It is shorthand for m.Get(key).Allow().
 func (m *Limiters[K]) Allow(key K) bool {
 	return m.Get(key).Allow()
+}
+
+// AllowN reports whether key's limiter permits n events at time t.
+func (m *Limiters[K]) AllowN(key K, t time.Time, n int) bool {
+	return m.Get(key).AllowN(t, n)
+}
+
+// Burst returns the burst size of key's limiter.
+func (m *Limiters[K]) Burst(key K) int {
+	return m.Get(key).Burst()
+}
+
+// Limit returns the rate limit of key's limiter.
+func (m *Limiters[K]) Limit(key K) rate.Limit {
+	return m.Get(key).Limit()
+}
+
+// Reserve returns a [rate.Reservation] for one event from key's limiter.
+func (m *Limiters[K]) Reserve(key K) *rate.Reservation {
+	return m.Get(key).Reserve()
+}
+
+// ReserveN returns a [rate.Reservation] for n events at time t from key's limiter.
+func (m *Limiters[K]) ReserveN(key K, t time.Time, n int) *rate.Reservation {
+	return m.Get(key).ReserveN(t, n)
+}
+
+// SetBurst updates the burst size of key's limiter.
+func (m *Limiters[K]) SetBurst(key K, newBurst int) {
+	m.Get(key).SetBurst(newBurst)
+}
+
+// SetBurstAt updates the burst size of key's limiter as of time t.
+func (m *Limiters[K]) SetBurstAt(key K, t time.Time, newBurst int) {
+	m.Get(key).SetBurstAt(t, newBurst)
+}
+
+// SetLimit updates the rate limit of key's limiter.
+func (m *Limiters[K]) SetLimit(key K, newLimit rate.Limit) {
+	m.Get(key).SetLimit(newLimit)
+}
+
+// SetLimitAt updates the rate limit of key's limiter as of time t.
+func (m *Limiters[K]) SetLimitAt(key K, t time.Time, newLimit rate.Limit) {
+	m.Get(key).SetLimitAt(t, newLimit)
+}
+
+// Tokens returns the number of tokens available in key's limiter right now.
+func (m *Limiters[K]) Tokens(key K) float64 {
+	return m.Get(key).Tokens()
+}
+
+// TokensAt returns the number of tokens available in key's limiter at time t.
+func (m *Limiters[K]) TokensAt(key K, t time.Time) float64 {
+	return m.Get(key).TokensAt(t)
+}
+
+// Wait blocks until key's limiter permits one event, or ctx is done.
+func (m *Limiters[K]) Wait(ctx context.Context, key K) error {
+	return m.Get(key).Wait(ctx)
+}
+
+// WaitN blocks until key's limiter permits n events, or ctx is done.
+func (m *Limiters[K]) WaitN(ctx context.Context, key K, n int) error {
+	return m.Get(key).WaitN(ctx, n)
 }
 
 // Has reports whether key has an active limiter without creating one.
