@@ -3,27 +3,127 @@
 package keyrate
 
 import (
+	"container/list"
 	"sync"
+	"time"
 
 	"golang.org/x/time/rate"
 )
+
+// entry holds a limiter and its eviction metadata.
+type entry[K comparable] struct {
+	limiter  *rate.Limiter
+	lastUsed time.Time
+	lruElem  *list.Element // value = K; nil when LRU is disabled
+}
 
 // Map holds an independent [rate.Limiter] for each distinct key.
 // The zero value is not usable; create one with [New].
 type Map[K comparable] struct {
 	mu      sync.Mutex
-	entries map[K]*rate.Limiter
+	entries map[K]*entry[K]
 	limit   rate.Limit
 	burst   int
+	ttl     time.Duration // 0 = disabled
+	maxSize int           // 0 = disabled
+	lru     *list.List    // non-nil when maxSize > 0
+
+	done chan struct{}
+	once sync.Once
+}
+
+// Option configures eviction behaviour for [New].
+type Option func(*evictConfig)
+
+type evictConfig struct {
+	ttl     time.Duration
+	maxSize int
+	auto    bool
+}
+
+// WithTTL evicts keys that have not been accessed for at least d.
+// A background goroutine sweeps every d/2; call [Map.Stop] when done.
+func WithTTL(d time.Duration) Option {
+	return func(c *evictConfig) { c.ttl = d }
+}
+
+// WithMaxSize caps the map at n keys, evicting the least-recently-used
+// entry on each insert. No background goroutine is started.
+func WithMaxSize(n int) Option {
+	return func(c *evictConfig) { c.maxSize = n }
+}
+
+// WithAutoEvict derives the TTL from the rate parameters: once a bucket has
+// been idle long enough to fully refill (burst÷r seconds), the limiter is
+// indistinguishable from a fresh one, so eviction is semantically free.
+// A background goroutine is started; call [Map.Stop] when done.
+// WithAutoEvict is a no-op when r is [rate.Inf] or burst is 0.
+func WithAutoEvict() Option {
+	return func(c *evictConfig) { c.auto = true }
 }
 
 // New returns a Map whose per-key limiters allow up to burst events
 // instantaneously, then refill at r events per second.
-func New[K comparable](r rate.Limit, burst int) *Map[K] {
-	return &Map[K]{
-		entries: make(map[K]*rate.Limiter),
+func New[K comparable](r rate.Limit, burst int, opts ...Option) *Map[K] {
+	cfg := &evictConfig{}
+	for _, o := range opts {
+		o(cfg)
+	}
+	if cfg.auto && r != rate.Inf && burst > 0 {
+		cfg.ttl = time.Duration(float64(burst) / float64(r) * float64(time.Second))
+	}
+
+	m := &Map[K]{
+		entries: make(map[K]*entry[K]),
 		limit:   r,
 		burst:   burst,
+		ttl:     cfg.ttl,
+		maxSize: cfg.maxSize,
+		done:    make(chan struct{}),
+	}
+	if cfg.maxSize > 0 {
+		m.lru = list.New()
+	}
+	if m.ttl > 0 {
+		go m.sweepLoop()
+	}
+	return m
+}
+
+// Stop halts the background eviction goroutine started by [WithTTL] or
+// [WithAutoEvict]. It is safe to call multiple times and is a no-op when
+// neither option was used.
+func (m *Map[K]) Stop() {
+	m.once.Do(func() { close(m.done) })
+}
+
+// remove deletes key k and removes it from the LRU list if applicable.
+// Must be called with m.mu held.
+func (m *Map[K]) remove(k K, e *entry[K]) {
+	if e.lruElem != nil {
+		m.lru.Remove(e.lruElem)
+	}
+	delete(m.entries, k)
+}
+
+func (m *Map[K]) sweepLoop() {
+	interval := max(m.ttl/2, time.Millisecond)
+	tick := time.NewTicker(interval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-tick.C:
+			now := time.Now()
+			m.mu.Lock()
+			for k, e := range m.entries {
+				if now.Sub(e.lastUsed) >= m.ttl {
+					m.remove(k, e)
+				}
+			}
+			m.mu.Unlock()
+		case <-m.done:
+			return
+		}
 	}
 }
 
@@ -32,11 +132,30 @@ func New[K comparable](r rate.Limit, burst int) *Map[K] {
 func (m *Map[K]) Limiter(key K) *rate.Limiter {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	l, ok := m.entries[key]
-	if !ok {
-		l = rate.NewLimiter(m.limit, m.burst)
-		m.entries[key] = l
+
+	now := time.Now()
+	if e, ok := m.entries[key]; ok {
+		e.lastUsed = now
+		if m.lru != nil {
+			m.lru.MoveToFront(e.lruElem)
+		}
+		return e.limiter
 	}
+
+	// LRU cap: evict the least-recently-used key before inserting.
+	if m.maxSize > 0 && len(m.entries) >= m.maxSize {
+		if tail := m.lru.Back(); tail != nil {
+			oldest := tail.Value.(K)
+			m.remove(oldest, m.entries[oldest])
+		}
+	}
+
+	l := rate.NewLimiter(m.limit, m.burst)
+	e := &entry[K]{limiter: l, lastUsed: now}
+	if m.lru != nil {
+		e.lruElem = m.lru.PushFront(key)
+	}
+	m.entries[key] = e
 	return l
 }
 
@@ -46,11 +165,21 @@ func (m *Map[K]) Allow(key K) bool {
 	return m.Limiter(key).Allow()
 }
 
-// Delete removes the limiter for key. The next call for that key
-// starts fresh with a full burst. A no-op if key is not present.
+// Has reports whether key has an active limiter without creating one.
+func (m *Map[K]) Has(key K) bool {
+	m.mu.Lock()
+	_, ok := m.entries[key]
+	m.mu.Unlock()
+	return ok
+}
+
+// Delete removes the limiter for key. The next call for that key starts
+// fresh with a full burst. A no-op if key is not present.
 func (m *Map[K]) Delete(key K) {
 	m.mu.Lock()
-	delete(m.entries, key)
+	if e, ok := m.entries[key]; ok {
+		m.remove(key, e)
+	}
 	m.mu.Unlock()
 }
 
