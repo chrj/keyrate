@@ -1,5 +1,7 @@
 # keyrate
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/chrj/keyrate.svg)](https://pkg.go.dev/github.com/chrj/keyrate)
+
 Per-key rate limiting for Go, built on top of [`golang.org/x/time/rate`](https://pkg.go.dev/golang.org/x/time/rate).
 
 Attach an independent token-bucket limiter to any comparable key — IP address, user ID, API token, or anything else — with optional LRU and TTL eviction to bound memory use.
