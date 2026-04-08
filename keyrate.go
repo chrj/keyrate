@@ -171,14 +171,41 @@ func (m *Limiters[K]) AllowN(key K, t time.Time, n int) bool {
 	return m.Get(key).AllowN(t, n)
 }
 
-// Burst returns the burst size of key's limiter.
-func (m *Limiters[K]) Burst(key K) int {
-	return m.Get(key).Burst()
+// getExisting returns the limiter for key if it exists, updating LRU and
+// lastUsed metadata. Returns nil if the key is not present.
+// Must NOT be called with m.mu held.
+func (m *Limiters[K]) getExisting(key K) *rate.Limiter {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.entries[key]
+	if !ok {
+		return nil
+	}
+	e.lastUsed = time.Now()
+	if m.lru != nil {
+		m.lru.MoveToFront(e.lruElem)
+	}
+	return e.limiter
 }
 
-// Limit returns the rate limit of key's limiter.
+// Burst returns the burst size of key's limiter, or the default burst
+// configured in [New] if key has no active limiter.
+// Does not create a limiter for key.
+func (m *Limiters[K]) Burst(key K) int {
+	if l := m.getExisting(key); l != nil {
+		return l.Burst()
+	}
+	return m.burst
+}
+
+// Limit returns the rate limit of key's limiter, or the default limit
+// configured in [New] if key has no active limiter.
+// Does not create a limiter for key.
 func (m *Limiters[K]) Limit(key K) rate.Limit {
-	return m.Get(key).Limit()
+	if l := m.getExisting(key); l != nil {
+		return l.Limit()
+	}
+	return m.limit
 }
 
 // Reserve returns a [rate.Reservation] for one event from key's limiter.
@@ -204,33 +231,55 @@ func (m *Limiters[K]) ReserveN(key K, t time.Time, n int) *rate.Reservation {
 }
 
 // SetBurst updates the burst size of key's limiter.
+// A no-op if key has no active limiter.
 func (m *Limiters[K]) SetBurst(key K, newBurst int) {
-	m.Get(key).SetBurst(newBurst)
+	if l := m.getExisting(key); l != nil {
+		l.SetBurst(newBurst)
+	}
 }
 
 // SetBurstAt updates the burst size of key's limiter as of time t.
+// A no-op if key has no active limiter.
 func (m *Limiters[K]) SetBurstAt(key K, t time.Time, newBurst int) {
-	m.Get(key).SetBurstAt(t, newBurst)
+	if l := m.getExisting(key); l != nil {
+		l.SetBurstAt(t, newBurst)
+	}
 }
 
 // SetLimit updates the rate limit of key's limiter.
+// A no-op if key has no active limiter.
 func (m *Limiters[K]) SetLimit(key K, newLimit rate.Limit) {
-	m.Get(key).SetLimit(newLimit)
+	if l := m.getExisting(key); l != nil {
+		l.SetLimit(newLimit)
+	}
 }
 
 // SetLimitAt updates the rate limit of key's limiter as of time t.
+// A no-op if key has no active limiter.
 func (m *Limiters[K]) SetLimitAt(key K, t time.Time, newLimit rate.Limit) {
-	m.Get(key).SetLimitAt(t, newLimit)
+	if l := m.getExisting(key); l != nil {
+		l.SetLimitAt(t, newLimit)
+	}
 }
 
-// Tokens returns the number of tokens available in key's limiter right now.
+// Tokens returns the number of tokens available in key's limiter right now,
+// or float64(burst) if key has no active limiter (a fresh limiter starts full).
+// Does not create a limiter for key.
 func (m *Limiters[K]) Tokens(key K) float64 {
-	return m.Get(key).Tokens()
+	if l := m.getExisting(key); l != nil {
+		return l.Tokens()
+	}
+	return float64(m.burst)
 }
 
-// TokensAt returns the number of tokens available in key's limiter at time t.
+// TokensAt returns the number of tokens available in key's limiter at time t,
+// or float64(burst) if key has no active limiter (a fresh limiter starts full).
+// Does not create a limiter for key.
 func (m *Limiters[K]) TokensAt(key K, t time.Time) float64 {
-	return m.Get(key).TokensAt(t)
+	if l := m.getExisting(key); l != nil {
+		return l.TokensAt(t)
+	}
+	return float64(m.burst)
 }
 
 // Wait blocks until key's limiter permits one event, or ctx is done.
