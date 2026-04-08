@@ -274,6 +274,64 @@ func TestAutoEvictKeepsActiveKeys(t *testing.T) {
 	})
 }
 
+// ---- read-only methods do not create entries ----
+
+func TestTokensDoesNotCreateEntry(t *testing.T) {
+	m := keyrate.New[string](rate.Every(time.Second), 5)
+	tok := m.Tokens("ghost")
+	if tok != 5 {
+		t.Fatalf("Tokens on missing key: got %v, want 5 (burst)", tok)
+	}
+	if m.Len() != 0 {
+		t.Fatalf("Len after Tokens: got %d, want 0", m.Len())
+	}
+}
+
+func TestBurstLimitDoNotCreateEntry(t *testing.T) {
+	m := keyrate.New[string](rate.Every(time.Second), 3)
+	if b := m.Burst("ghost"); b != 3 {
+		t.Fatalf("Burst: got %d, want 3", b)
+	}
+	if l := m.Limit("ghost"); l != rate.Every(time.Second) {
+		t.Fatalf("Limit: got %v, want %v", l, rate.Every(time.Second))
+	}
+	if m.Len() != 0 {
+		t.Fatalf("Len: got %d, want 0", m.Len())
+	}
+}
+
+func TestReadOnlyDoesNotEvictLRU(t *testing.T) {
+	m := keyrate.New[string](rate.Every(time.Second), 1, keyrate.WithMaxSize(2))
+	m.Allow("alice")
+	m.Allow("bob")
+	// Querying a missing key must not evict alice or bob.
+	m.Tokens("probe")
+	if m.Len() != 2 {
+		t.Fatalf("Len: got %d, want 2", m.Len())
+	}
+	if !m.Has("alice") || !m.Has("bob") {
+		t.Fatal("existing keys should not be evicted by a read-only query")
+	}
+}
+
+func TestSetLimitNoOpOnMissingKey(t *testing.T) {
+	m := keyrate.New[string](rate.Every(time.Second), 1)
+	m.SetLimit("ghost", 100)
+	m.SetBurst("ghost", 100)
+	if m.Len() != 0 {
+		t.Fatalf("Len: got %d, want 0 (setters should not create entries)", m.Len())
+	}
+}
+
+func TestTokensReturnsCorrectValueForExistingKey(t *testing.T) {
+	m := keyrate.New[string](rate.Every(time.Second), 3)
+	m.Allow("alice") // consumes 1 token
+	tok := m.Tokens("alice")
+	if tok < 1.9 || tok > 2.1 {
+		t.Fatalf("Tokens after 1 Allow on burst=3: got %v, want ~2", tok)
+	}
+}
+
 // ---- combined strategies ----
 
 func TestLRUAndTTLCombined(t *testing.T) {
