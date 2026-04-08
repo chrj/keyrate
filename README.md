@@ -17,12 +17,12 @@ go get github.com/chrj/keyrate
 limiters := keyrate.New[netip.Addr](rate.Every(100*time.Millisecond), 20)
 
 func handler(w http.ResponseWriter, r *http.Request) {
-    ip := mustParseAddr(r.RemoteAddr)
-    if !limiters.Allow(ip) {
-        http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
-        return
-    }
-    // ...
+	ip := mustParseAddr(r.RemoteAddr)
+	if !limiters.Allow(ip) {
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
+	// ...
 }
 ```
 
@@ -78,7 +78,7 @@ Keeps at most `n` keys. When a new key would exceed the cap, the least-recently-
 ```go
 // At most 10 000 IPs in memory at once.
 limiters := keyrate.New[netip.Addr](rate.Every(time.Second), 10,
-    keyrate.WithMaxSize(10_000),
+	keyrate.WithMaxSize(10_000),
 )
 ```
 
@@ -88,7 +88,7 @@ Evicts keys that have not been accessed for at least `d`. A background goroutine
 
 ```go
 limiters := keyrate.New[string](rate.Every(time.Second), 5,
-    keyrate.WithTTL(10*time.Minute),
+	keyrate.WithTTL(10*time.Minute),
 )
 defer limiters.Stop()
 ```
@@ -102,7 +102,7 @@ Derives the TTL automatically as `burst ÷ r` — the time needed to fully refil
 ```go
 // rate=1/s, burst=60 → auto TTL = 60s
 limiters := keyrate.New[string](rate.Every(time.Second), 60,
-    keyrate.WithAutoEvict(),
+	keyrate.WithAutoEvict(),
 )
 defer limiters.Stop()
 ```
@@ -112,8 +112,8 @@ defer limiters.Stop()
 ```go
 // Hard cap of 50 000 keys; also sweep out idle keys after 5 minutes.
 limiters := keyrate.New[netip.Addr](rate.Every(time.Second), 100,
-    keyrate.WithMaxSize(50_000),
-    keyrate.WithTTL(5*time.Minute),
+	keyrate.WithMaxSize(50_000),
+	keyrate.WithTTL(5*time.Minute),
 )
 defer limiters.Stop()
 ```
@@ -127,14 +127,14 @@ LRU and TTL work independently: LRU evicts synchronously on insert when the cap 
 ```go
 // Wait until the limiter allows the event (respects context cancellation).
 if err := limiters.Get(userID).Wait(r.Context()); err != nil {
-    http.Error(w, "cancelled", http.StatusRequestTimeout)
-    return
+	http.Error(w, "cancelled", http.StatusRequestTimeout)
+	return
 }
 
 // Reserve n tokens at once.
 r := limiters.Get(userID).ReserveN(time.Now(), n)
 if !r.OK() {
-    // n exceeds burst; will never be satisfiable.
+	// n exceeds burst; will never be satisfiable.
 }
 time.Sleep(r.Delay())
 ```
