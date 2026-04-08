@@ -38,6 +38,7 @@ type Option func(*evictConfig)
 
 type evictConfig struct {
 	ttl     time.Duration
+	ttlSet  bool
 	maxSize int
 	auto    bool
 }
@@ -45,7 +46,7 @@ type evictConfig struct {
 // WithTTL evicts keys that have not been accessed for at least d.
 // A background goroutine sweeps every d/2; call [Limiters.Stop] when done.
 func WithTTL(d time.Duration) Option {
-	return func(c *evictConfig) { c.ttl = d }
+	return func(c *evictConfig) { c.ttl = d; c.ttlSet = true }
 }
 
 // WithMaxSize caps the map at n keys, evicting the least-recently-used
@@ -71,7 +72,12 @@ func New[K comparable](r rate.Limit, burst int, opts ...Option) *Limiters[K] {
 		o(cfg)
 	}
 	if cfg.auto && r != rate.Inf && burst > 0 {
-		cfg.ttl = time.Duration(float64(burst) / float64(r) * float64(time.Second))
+		autoTTL := time.Duration(float64(burst) / float64(r) * float64(time.Second))
+		if cfg.ttlSet {
+			cfg.ttl = min(cfg.ttl, autoTTL)
+		} else {
+			cfg.ttl = autoTTL
+		}
 	}
 
 	m := &Limiters[K]{

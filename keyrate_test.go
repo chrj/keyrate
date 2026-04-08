@@ -274,6 +274,66 @@ func TestAutoEvictKeepsActiveKeys(t *testing.T) {
 	})
 }
 
+// WithTTL before WithAutoEvict: min(10s, 2s) = 2s.
+func TestAutoEvictWithTTL_TTLFirst(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		// rate=1/s, burst=2 → auto TTL = 2s. Explicit TTL = 10s.
+		m := keyrate.New[string](rate.Every(time.Second), 2,
+			keyrate.WithTTL(10*time.Second),
+			keyrate.WithAutoEvict(),
+		)
+		defer m.Stop()
+
+		m.Allow("alice")
+		time.Sleep(3 * time.Second) // past auto TTL of 2s
+		synctest.Wait()
+
+		if m.Has("alice") {
+			t.Fatal("alice should be evicted (min TTL = 2s)")
+		}
+	})
+}
+
+// WithAutoEvict before WithTTL: same result, min(2s, 10s) = 2s.
+func TestAutoEvictWithTTL_AutoFirst(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		// rate=1/s, burst=2 → auto TTL = 2s. Explicit TTL = 10s.
+		m := keyrate.New[string](rate.Every(time.Second), 2,
+			keyrate.WithAutoEvict(),
+			keyrate.WithTTL(10*time.Second),
+		)
+		defer m.Stop()
+
+		m.Allow("alice")
+		time.Sleep(3 * time.Second) // past auto TTL of 2s
+		synctest.Wait()
+
+		if m.Has("alice") {
+			t.Fatal("alice should be evicted (min TTL = 2s)")
+		}
+	})
+}
+
+// Explicit TTL shorter than auto: explicit wins.
+func TestAutoEvictWithShorterExplicitTTL(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		// rate=1/s, burst=10 → auto TTL = 10s. Explicit TTL = 2s.
+		m := keyrate.New[string](rate.Every(time.Second), 10,
+			keyrate.WithAutoEvict(),
+			keyrate.WithTTL(2*time.Second),
+		)
+		defer m.Stop()
+
+		m.Allow("alice")
+		time.Sleep(3 * time.Second) // past explicit TTL of 2s
+		synctest.Wait()
+
+		if m.Has("alice") {
+			t.Fatal("alice should be evicted (explicit TTL = 2s wins over auto 10s)")
+		}
+	})
+}
+
 // ---- combined strategies ----
 
 func TestLRUAndTTLCombined(t *testing.T) {
