@@ -27,7 +27,7 @@ jobs:
 
       - name: Run govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          GOTOOLCHAIN=auto go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           govulncheck -show verbose ./...
 
   semgrep:
@@ -76,5 +76,5 @@ jobs:
 
       - name: Run gosec
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          GOTOOLCHAIN=auto go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
           gosec -exclude-generated ./...
