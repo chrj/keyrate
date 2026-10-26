@@ -144,7 +144,7 @@ Accessing a key resets its idle timer, so active keys are never evicted.
 
 ### WithAutoEvict() — semantic TTL
 
-Derives the TTL automatically as `burst ÷ r` — the time needed to fully refill an empty bucket. Once a bucket is full it is indistinguishable from a freshly created one, so eviction is semantically free: no observable difference to callers. This is a no-op when `r` is `rate.Inf` or `burst` is `0`.
+Derives the TTL automatically as `burst ÷ r` — the time needed to fully refill an empty bucket. Once a bucket is full it is indistinguishable from a freshly created one, so eviction is semantically free: no observable difference to callers. This is a no-op when `r` is `0` or less, when `r` is `rate.Inf`, when `burst` is `0`, or when `burst ÷ r` is more than the maximum `time.Duration`. A bucket with a zero rate never refills, so its eviction is not free.
 
 ```go
 // rate=1/s, burst=60 → auto TTL = 60s

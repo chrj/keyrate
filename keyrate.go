@@ -5,6 +5,7 @@ package keyrate
 import (
 	"container/list"
 	"context"
+	"math"
 	"sync"
 	"time"
 
@@ -59,7 +60,9 @@ func WithMaxSize(n int) Option {
 // been idle long enough to fully refill (burst÷r seconds), the limiter is
 // indistinguishable from a fresh one, so eviction is semantically free.
 // A background goroutine is started; call [Limiters.Stop] when done.
-// WithAutoEvict is a no-op when r is [rate.Inf] or burst is 0.
+// WithAutoEvict is a no-op when r is 0 or less, when r is [rate.Inf], when
+// burst is 0, or when burst÷r is more than the maximum [time.Duration].
+// A bucket with a zero rate never refills, so its eviction is not free.
 func WithAutoEvict() Option {
 	return func(c *evictConfig) { c.auto = true }
 }
@@ -71,8 +74,7 @@ func New[K comparable](r rate.Limit, burst int, opts ...Option) *Limiters[K] {
 	for _, o := range opts {
 		o(cfg)
 	}
-	if cfg.auto && r != rate.Inf && burst > 0 {
-		autoTTL := time.Duration(float64(burst) / float64(r) * float64(time.Second))
+	if autoTTL, ok := refillTime(r, burst); cfg.auto && ok {
 		if cfg.ttlSet {
 			cfg.ttl = min(cfg.ttl, autoTTL)
 		} else {
@@ -95,6 +97,21 @@ func New[K comparable](r rate.Limit, burst int, opts ...Option) *Limiters[K] {
 		go m.sweepLoop()
 	}
 	return m
+}
+
+// refillTime returns the time to fully refill an empty bucket (burst÷r).
+// It returns false when the bucket never refills, or when the time is
+// more than the maximum [time.Duration]. A float-to-int conversion that
+// overflows gives a result that depends on the CPU architecture.
+func refillTime(r rate.Limit, burst int) (time.Duration, bool) {
+	if r <= 0 || r == rate.Inf || burst <= 0 {
+		return 0, false
+	}
+	ns := float64(burst) / float64(r) * float64(time.Second)
+	if ns >= math.MaxInt64 {
+		return 0, false
+	}
+	return time.Duration(ns), true
 }
 
 // Stop halts the background eviction goroutine started by [WithTTL] or
