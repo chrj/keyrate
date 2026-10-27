@@ -334,6 +334,54 @@ func TestAutoEvictWithShorterExplicitTTL(t *testing.T) {
 	})
 }
 
+// A zero or very small rate has no finite auto TTL: the explicit TTL applies.
+func TestAutoEvictWithoutFiniteRefillKeepsExplicitTTL(t *testing.T) {
+	tests := []struct {
+		name string
+		r    rate.Limit
+	}{
+		{name: "zero rate", r: 0},
+		{name: "burst/r overflows time.Duration", r: 1e-12},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				m := keyrate.New[string](tt.r, 5,
+					keyrate.WithTTL(time.Minute),
+					keyrate.WithAutoEvict(),
+				)
+				defer m.Stop()
+
+				m.Allow("alice")
+				time.Sleep(2 * time.Minute) // past explicit TTL of 1m
+				synctest.Wait()
+
+				if m.Has("alice") {
+					t.Fatal("alice should be evicted (explicit TTL = 1m)")
+				}
+			})
+		})
+	}
+}
+
+// A zero rate never refills, so auto eviction would reset a spent key.
+func TestAutoEvictZeroRateKeepsSpentKey(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := keyrate.New[string](0, 1, keyrate.WithAutoEvict())
+		defer m.Stop()
+
+		if !m.Allow("alice") {
+			t.Fatal("alice[0]: want allow (burst=1)")
+		}
+		time.Sleep(time.Hour)
+		synctest.Wait()
+
+		if m.Allow("alice") {
+			t.Fatal("alice[1]: want deny, a zero rate never refills")
+		}
+	})
+}
+
 // ---- read-only methods do not create entries ----
 
 func TestTokensDoesNotCreateEntry(t *testing.T) {
